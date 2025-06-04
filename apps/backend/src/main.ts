@@ -37,7 +37,7 @@ databaseService.initialize().catch(console.error);
 // Routes
 app.use('/api/streams', createStreamRoutes(aceStreamService));
 app.use('/api/channels', createChannelsRoutes(databaseService));
-app.use('/api/health', createHealthRoutes(aceStreamService, databaseService));
+app.use('/api/health', createHealthRoutes());
 
 // Root endpoint
 app.get('/', (req, res) => {

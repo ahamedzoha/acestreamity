@@ -1,5 +1,4 @@
 import * as sqlite3 from 'sqlite3';
-import { promisify } from 'util';
 
 type DatabaseConfig = {
   path: string;
@@ -191,7 +190,15 @@ export function createDatabaseService(config: DatabaseConfig): DatabaseService {
           }
 
           // Get the created channel
-          getChannelById(this.lastID).then(resolve).catch(reject);
+          getChannelById(this.lastID)
+            .then((channel) => {
+              if (channel) {
+                resolve(channel);
+              } else {
+                reject(new Error('Failed to retrieve created channel'));
+              }
+            })
+            .catch(reject);
         }
       );
     });
@@ -247,7 +254,15 @@ export function createDatabaseService(config: DatabaseConfig): DatabaseService {
         }
 
         // Get the updated channel
-        getChannelById(id).then(resolve).catch(reject);
+        getChannelById(id)
+          .then((channel) => {
+            if (channel) {
+              resolve(channel);
+            } else {
+              reject(new Error('Failed to retrieve updated channel'));
+            }
+          })
+          .catch(reject);
       });
     });
   };

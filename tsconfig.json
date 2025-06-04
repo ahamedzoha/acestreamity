@@ -4,10 +4,7 @@
   "files": [],
   "references": [
     {
-      "path": "/ace-stream-hls"
-    },
-    {
-      "path": "/backend"
+      "path": "./apps/frontend"
     }
   ]
 }

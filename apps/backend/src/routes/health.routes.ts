@@ -1,6 +1,4 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { AceStreamService } from '../services/ace-stream.service';
-import { DatabaseService } from '../services/database.service';
 
 type HealthStatus = 'healthy' | 'degraded' | 'unhealthy' | 'error';
 
@@ -20,13 +18,10 @@ type HealthResponse = {
   };
 };
 
-export function createHealthRoutes(
-  aceStreamService: AceStreamService,
-  databaseService: DatabaseService
-): Router {
+export function createHealthRoutes(): Router {
   const router = Router();
 
-  // Overall health check
+  // Basic health check
   router.get(
     '/',
     async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -40,13 +35,17 @@ export function createHealthRoutes(
 
         // Check Ace Stream service
         try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 5000);
+
           const response = await fetch(
             'http://localhost:6878/webui/api/service',
             {
               method: 'GET',
-              timeout: 5000,
+              signal: controller.signal,
             }
           );
+          clearTimeout(timeoutId);
 
           if (response.ok) {
             const data = await response.json();
@@ -74,7 +73,7 @@ export function createHealthRoutes(
 
         // Check database connectivity
         try {
-          // Simple database check - you might want to implement a ping method
+          // Simple database check - could ping database here
           health.services.database = {
             status: 'healthy',
             error: null,
@@ -107,10 +106,15 @@ export function createHealthRoutes(
     '/ready',
     async (req: Request, res: Response, next: NextFunction): Promise<void> => {
       try {
-        // Check if all critical services are available
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+
         const checks = await Promise.allSettled([
-          fetch('http://localhost:6878/webui/api/service', { timeout: 2000 }),
+          fetch('http://localhost:6878/webui/api/service', {
+            signal: controller.signal,
+          }),
         ]);
+        clearTimeout(timeoutId);
 
         const isReady = checks.every((result) => result.status === 'fulfilled');
 
@@ -154,59 +158,6 @@ export function createHealthRoutes(
       }
     }
   );
-
-  // Ace Stream engine specific health
-  router.get('/acestream', async (req: Request, res: Response) => {
-    try {
-      const engineStatus = await aceStreamService.checkEngine();
-      const sessions = aceStreamService.getActiveSessions();
-
-      res.json({
-        status: 'healthy',
-        engine: engineStatus,
-        activeSessions: sessions.size,
-        sessions: Array.from(sessions.values()).map((session) => ({
-          id: session.id,
-          aceId: session.aceId,
-          status: session.status,
-          startedAt: session.startedAt,
-        })),
-      });
-    } catch (error) {
-      res.status(503).json({
-        status: 'error',
-        error: error instanceof Error ? error.message : 'Unknown error',
-        engine: null,
-        activeSessions: 0,
-        sessions: [],
-      });
-    }
-  });
-
-  // Database specific health
-  router.get('/database', async (req: Request, res: Response) => {
-    try {
-      const channels = await databaseService.getChannels();
-
-      res.json({
-        status: 'healthy',
-        channelCount: channels.length,
-        recentChannels: channels.slice(0, 5).map((ch) => ({
-          id: ch.id,
-          name: ch.name,
-          category: ch.category,
-          is_active: ch.is_active,
-        })),
-      });
-    } catch (error) {
-      res.status(503).json({
-        status: 'error',
-        error: error instanceof Error ? error.message : 'Unknown error',
-        channelCount: 0,
-        recentChannels: [],
-      });
-    }
-  });
 
   return router;
 }

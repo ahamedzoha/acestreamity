@@ -19,13 +19,13 @@
     "customConditions": ["development"],
     "baseUrl": ".",
     "paths": {
-      "@ace-stream-hls/shared-types": ["libs/shared/types/src/index.ts"],
-      "@ace-stream-hls/shared-utils": ["libs/shared/utils/src/index.ts"],
       "@/*": ["apps/frontend/src/*"],
       "@/components/*": ["apps/frontend/src/components/*"],
-      "@/utils/*": ["apps/frontend/src/utils/*"],
-      "@/types/*": ["apps/frontend/src/types/*"],
       "@/hooks/*": ["apps/frontend/src/hooks/*"],
+      "@/types/*": ["apps/frontend/src/types/*"],
+      "@/utils/*": ["apps/frontend/src/utils/*"],
+      "@ace-stream-hls/shared-types": ["libs/shared/types/src/index.ts"],
+      "@ace-stream-hls/shared-utils": ["libs/shared/utils/src/index.ts"],
       "@backend/*": ["apps/backend/src/*"]
     }
   }
