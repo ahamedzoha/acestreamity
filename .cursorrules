@@ -1,0 +1,217 @@
+# Ace Stream HLS Streaming System - Cursor Rules
+
+## Project Context
+This is a modern React-based streaming platform that bridges Ace Stream P2P technology with HTTP Live Streaming (HLS). The system enables cross-platform streaming to devices that don't natively support Ace Stream (iOS, tvOS, etc.).
+
+## Technology Stack
+- **Monorepo**: NX (latest)
+- **Frontend**: React 19, Vite, TypeScript
+- **Styling**: Tailwind CSS v4 (not v3)
+- **Backend**: Node.js, Express, SQLite
+- **Infrastructure**: Docker, magnetikonline/docker-acestream-server
+
+## Code Style & Standards
+
+### TypeScript
+- Use strict TypeScript configuration
+- Prefer `type` over `interface` for object shapes
+- Use path aliases consistently: `@/components`, `@/utils`, `@/types`
+- Always explicitly type function parameters and return types
+- Use `const assertions` for immutable data
+
+### React 19
+- Use functional components exclusively
+- Prefer `use` hook for data fetching
+- Use React 19's new concurrent features when appropriate
+- Implement proper error boundaries
+- Use React.memo() for performance optimization only when needed
+
+### Tailwind CSS v4
+- Use Tailwind v4 syntax and features (not v3)
+- Prefer utility classes over custom CSS
+- Use design tokens and CSS variables
+- Implement responsive design with mobile-first approach
+- Use Tailwind's new layer system properly
+
+### File Organization
+```
+apps/
+  frontend/           # React app
+  backend/           # Express API
+libs/
+  shared/
+    types/           # Shared TypeScript types
+    utils/           # Shared utilities
+tools/               # Build and dev tools
+```
+
+### Naming Conventions
+- **Files**: kebab-case (`stream-manager.tsx`)
+- **Components**: PascalCase (`StreamManager`)
+- **Variables/Functions**: camelCase (`getStreamStatus`)
+- **Constants**: SCREAMING_SNAKE_CASE (`ACESTREAM_API_URL`)
+- **Types**: PascalCase (`StreamSession`)
+
+### Component Patterns
+- Create reusable components in `libs/shared/components`
+- Use compound components for complex UI
+- Implement proper prop validation with TypeScript
+- Use render props or custom hooks for logic sharing
+
+### API & Data Management
+- Use native fetch with proper error handling
+- Implement proper loading and error states
+- Use React 19's `use` hook for data fetching
+- Prefer server state management over client state
+- Implement proper caching strategies
+
+### Performance Guidelines
+- Lazy load components and routes
+- Optimize bundle size with proper imports
+- Use React.memo() judiciously
+- Implement proper image optimization
+- Use streaming for large data sets
+
+### Error Handling
+- Always handle async operation errors
+- Implement proper error boundaries
+- Log errors appropriately (not console.log in production)
+- Provide meaningful error messages to users
+- Handle network failures gracefully
+
+### Docker & Infrastructure
+- Use multi-stage builds for optimization
+- Implement proper health checks
+- Use environment variables for configuration
+- Follow security best practices
+- Optimize for development experience
+
+### Ace Stream Integration
+- Always validate content IDs before processing
+- Handle stream startup delays gracefully
+- Implement proper cleanup for stopped streams
+- Monitor stream health and statistics
+- Provide fallback options for failed streams
+
+### Database Operations
+- Use prepared statements for SQLite
+- Implement proper connection pooling
+- Handle database migrations properly
+- Use transactions for multi-step operations
+- Implement proper indexing for performance
+
+### Testing Strategy
+- Write unit tests for business logic
+- Implement integration tests for API endpoints
+- Test React components with React Testing Library
+- Mock external dependencies (Ace Stream engine)
+- Test error scenarios and edge cases
+
+### Security Considerations
+- Validate all user inputs
+- Sanitize content IDs and URLs
+- Implement rate limiting
+- Use CORS appropriately
+- Never expose sensitive data in logs
+
+### Documentation
+- Document all public APIs
+- Use JSDoc for complex functions
+- Maintain README files for each app/lib
+- Document deployment procedures
+- Keep architectural decisions recorded
+
+## Specific Rules
+
+### React Components
+```typescript
+// ✅ Good
+type StreamPlayerProps = {
+  streamId: string;
+  onError: (error: Error) => void;
+};
+
+export const StreamPlayer = ({ streamId, onError }: StreamPlayerProps) => {
+  // Implementation
+};
+
+// ❌ Avoid
+export const StreamPlayer = (props: any) => {
+  // Implementation
+};
+```
+
+### API Endpoints
+```typescript
+// ✅ Good
+app.get('/api/streams/:aceId', async (req, res) => {
+  try {
+    const { aceId } = req.params;
+    const result = await streamService.startStream(aceId);
+    res.json(result);
+  } catch (error) {
+    logger.error('Stream start failed', { aceId, error });
+    res.status(500).json({ error: 'Failed to start stream' });
+  }
+});
+
+// ❌ Avoid
+app.get('/api/streams/:aceId', (req, res) => {
+  streamService.startStream(req.params.aceId)
+    .then(result => res.json(result))
+    .catch(err => res.status(500).send(err.message));
+});
+```
+
+### Tailwind Classes
+```jsx
+// ✅ Good - Tailwind v4 with modern utilities
+<div className="grid grid-cols-[1fr_2fr] gap-4 p-6 bg-gray-50 rounded-xl shadow-lg">
+  <StreamCard className="col-span-1" />
+</div>
+
+// ❌ Avoid - Tailwind v3 patterns
+<div className="grid grid-cols-3 gap-4 p-6 bg-gray-50 rounded-lg shadow-md">
+  <StreamCard className="col-span-1" />
+</div>
+```
+
+### Error Handling
+```typescript
+// ✅ Good
+const handleStreamStart = async (aceId: string) => {
+  try {
+    setLoading(true);
+    const stream = await streamApi.start(aceId);
+    setActiveStream(stream);
+  } catch (error) {
+    logger.error('Failed to start stream', { aceId, error });
+    setError('Unable to start stream. Please try again.');
+  } finally {
+    setLoading(false);
+  }
+};
+
+// ❌ Avoid
+const handleStreamStart = (aceId: string) => {
+  streamApi.start(aceId)
+    .then(setActiveStream)
+    .catch(console.error);
+};
+```
+
+## Development Workflow
+1. Create feature branches from `main`
+2. Use conventional commits (`feat:`, `fix:`, `docs:`, etc.)
+3. Run tests before committing
+4. Use NX affected commands for efficient builds
+5. Update documentation with code changes
+
+## Performance Targets
+- First Contentful Paint: < 1.5s
+- Time to Interactive: < 3s
+- Bundle size: < 500KB (gzipped)
+- API response time: < 200ms
+- Stream startup: < 10s
+
+Remember: This is a streaming application where performance and reliability are critical. Always consider the user experience on mobile devices and slower networks. 
