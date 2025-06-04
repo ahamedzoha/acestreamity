@@ -71,8 +71,8 @@ app.use(
   }
 );
 
-// 404 handler
-app.use('*splat', (req, res) => {
+// 404 handler - Express v5 compatible
+app.use((req, res) => {
   res.status(404).json({
     error: 'Not found',
     message: `Route ${req.originalUrl} not found`,

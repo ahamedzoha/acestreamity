@@ -1,14 +1,31 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { HlsPlayer } from '../components/hls-player';
 
 export function App() {
   const [aceStreamId, setAceStreamId] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamUrl, setStreamUrl] = useState('');
+  const [sessionId, setSessionId] = useState('');
   const [error, setError] = useState('');
+  const [stats, setStats] = useState({
+    peers: 0,
+    downloadSpeed: '0 KB/s',
+    status: 'stopped',
+  });
+  const [engineStatus, setEngineStatus] = useState('checking');
 
+  // Real API call to start stream
   const handleStartStream = async () => {
     if (!aceStreamId.trim()) {
       setError('Please enter a valid Ace Stream ID');
+      return;
+    }
+
+    // Validate Ace Stream ID format (40 hex characters)
+    if (aceStreamId.length !== 40 || !/^[a-f0-9]+$/i.test(aceStreamId)) {
+      setError(
+        'Invalid Ace Stream ID format. Must be 40 hexadecimal characters.'
+      );
       return;
     }
 
@@ -16,22 +33,124 @@ export function App() {
     setError('');
 
     try {
-      // TODO: Implement actual API call
-      await new Promise((resolve) => setTimeout(resolve, 2000)); // Simulate API call
-      setStreamUrl(
-        `http://localhost:3001/api/streams/hls/${aceStreamId}/manifest.m3u8`
+      const response = await fetch(
+        `http://localhost:3001/api/streams/start/${aceStreamId}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        }
       );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to start stream');
+      }
+
+      if (data.success) {
+        setSessionId(data.session.id);
+        setStreamUrl(data.session.hlsUrl);
+        // Start polling for stats
+        pollStreamStats(data.session.id);
+      } else {
+        throw new Error('Failed to create stream session');
+      }
     } catch (err) {
-      setError('Failed to start stream. Please try again.');
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Failed to start stream. Please try again.'
+      );
       setIsStreaming(false);
     }
   };
 
-  const handleStopStream = () => {
+  // Real API call to stop stream
+  const handleStopStream = async () => {
+    if (sessionId) {
+      try {
+        await fetch(`http://localhost:3001/api/streams/stop/${sessionId}`, {
+          method: 'POST',
+        });
+      } catch (err) {
+        console.error('Failed to stop stream:', err);
+      }
+    }
+
     setIsStreaming(false);
     setStreamUrl('');
+    setSessionId('');
     setError('');
+    setStats({ peers: 0, downloadSpeed: '0 KB/s', status: 'stopped' });
   };
+
+  // Poll stream statistics
+  const pollStreamStats = async (currentSessionId: string) => {
+    if (!currentSessionId || !isStreaming) return;
+
+    try {
+      const response = await fetch(
+        `http://localhost:3001/api/streams/status/${currentSessionId}`
+      );
+      const data = await response.json();
+
+      if (data.success && data.stats) {
+        const speedMBps = (data.stats.speed_down / 1024).toFixed(1);
+        setStats({
+          peers: data.stats.peers || 0,
+          downloadSpeed: `${speedMBps} MB/s`,
+          status: data.stats.status || 'unknown',
+        });
+      }
+    } catch (err) {
+      console.error('Failed to fetch stream stats:', err);
+    }
+
+    // Poll every 5 seconds if still streaming
+    setTimeout(() => {
+      if (isStreaming && sessionId === currentSessionId) {
+        pollStreamStats(currentSessionId);
+      }
+    }, 5000);
+  };
+
+  // Check backend health on component mount
+  useEffect(() => {
+    const checkBackendHealth = async () => {
+      try {
+        const response = await fetch('http://localhost:3001/api/health');
+        const data = await response.json();
+
+        if (!response.ok) {
+          setError(
+            'Backend API is not responding. Please ensure the server is running.'
+          );
+          setEngineStatus('offline');
+        } else {
+          // Check Ace Stream engine status
+          if (data.services?.aceStream?.status === 'healthy') {
+            setEngineStatus('online');
+          } else {
+            setEngineStatus('error');
+            setError(
+              `Ace Stream engine error: ${
+                data.services?.aceStream?.error || 'Unknown error'
+              }`
+            );
+          }
+        }
+      } catch (err) {
+        setError(
+          'Cannot connect to backend API. Please ensure the server is running on port 3001.'
+        );
+        setEngineStatus('offline');
+      }
+    };
+
+    checkBackendHealth();
+  }, []);
 
   const handleVlcLaunch = () => {
     if (streamUrl) {
@@ -183,7 +302,25 @@ export function App() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-600">Engine Status</span>
-                  <span className="status-streaming">Online</span>
+                  <span
+                    className={
+                      engineStatus === 'online'
+                        ? 'status-streaming'
+                        : engineStatus === 'error'
+                        ? 'status-error'
+                        : engineStatus === 'offline'
+                        ? 'status-stopped'
+                        : 'status-loading'
+                    }
+                  >
+                    {engineStatus === 'online'
+                      ? 'Online'
+                      : engineStatus === 'error'
+                      ? 'Error'
+                      : engineStatus === 'offline'
+                      ? 'Offline'
+                      : 'Checking...'}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-600">Stream Status</span>
@@ -209,13 +346,13 @@ export function App() {
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-600">Peers</span>
                   <span className="text-sm font-medium text-gray-900">
-                    {isStreaming ? '12' : '0'}
+                    {stats.peers}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-600">Download Speed</span>
                   <span className="text-sm font-medium text-gray-900">
-                    {isStreaming ? '2.4 MB/s' : '0 KB/s'}
+                    {stats.downloadSpeed}
                   </span>
                 </div>
               </div>
@@ -250,14 +387,11 @@ export function App() {
             ) : (
               <div className="space-y-4">
                 <div className="aspect-video bg-black rounded-lg flex items-center justify-center">
-                  <video
-                    controls
-                    className="w-full h-full rounded-lg"
+                  <HlsPlayer
                     src={streamUrl}
+                    className="w-full h-full rounded-lg"
                     poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'%3E%3Cpath fill='%236B7280' d='M4 6h16v12H4z'/%3E%3C/svg%3E"
-                  >
-                    Your browser does not support the video tag.
-                  </video>
+                  />
                 </div>
 
                 <div className="bg-gray-50 rounded-lg p-4">

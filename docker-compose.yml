@@ -1,7 +1,9 @@
 services:
   # Ace Stream Engine
   acestream-engine:
-    image: magnetikonline/acestream-server:3.1.49_debian_8.11
+    build:
+      context: .
+      dockerfile: Dockerfile.acestream
     container_name: acestream-engine
     ports:
       - '6878:6878'
@@ -13,7 +15,13 @@ services:
           size: 1G
     environment:
       - ACESTREAM_CACHE_DIR=/cache
+      - PYTHONUNBUFFERED=1
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
     networks:
       - ace-stream-network
     healthcheck:
@@ -47,6 +55,3 @@ volumes:
 networks:
   ace-stream-network:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
