@@ -1,5 +1,22 @@
-import { useState, useEffect } from 'react';
-import { HlsPlayer } from '../components/hls-player';
+import { useState, useEffect, useRef } from 'react';
+import { Button, Card, CardBody, Input, Chip, Progress } from '@heroui/react';
+import { HlsPlayer, HlsPlayerRef } from '../components/hls-player';
+import { ChannelSidebar } from '../components/channel-sidebar';
+import { VideoControls } from '../components/video-controls';
+
+type StreamStats = {
+  peers: number;
+  downloadSpeed: string;
+  status: string;
+};
+
+type Channel = {
+  id: string;
+  name: string;
+  aceId: string;
+  category: string;
+  isLive?: boolean;
+};
 
 export function App() {
   const [aceStreamId, setAceStreamId] = useState('');
@@ -7,22 +24,72 @@ export function App() {
   const [streamUrl, setStreamUrl] = useState('');
   const [sessionId, setSessionId] = useState('');
   const [error, setError] = useState('');
-  const [stats, setStats] = useState({
+  const [stats, setStats] = useState<StreamStats>({
     peers: 0,
     downloadSpeed: '0 KB/s',
     status: 'stopped',
   });
   const [engineStatus, setEngineStatus] = useState('checking');
+  const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
 
-  // Real API call to start stream
+  // Video player state
+  const videoRef = useRef<HlsPlayerRef>(null);
+  const [videoIsPlaying, setVideoIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [volume, setVolume] = useState(1);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isVideoLoading, setIsVideoLoading] = useState(false);
+
+  // Sample channels data - you can replace with your actual channel list
+  const channels: Channel[] = [
+    {
+      id: '1',
+      name: 'Premier Sports 1',
+      aceId: 'acestream://75a56863b6fe0407ad4305b4d7ee5643c3923565',
+      category: 'Sports',
+      isLive: true,
+    },
+    {
+      id: '2',
+      name: 'Sky Sports Main Event',
+      aceId: 'acestream://eab7aeef0218ce8b0752e596e4792b69eda4df5e',
+      category: 'Sports',
+      isLive: true,
+    },
+    {
+      id: '2',
+      name: 'Movie Channel',
+      aceId: 'acestream://f3b48b16e4d8a4e3bb3f8b7d5c9a8b6e4d8a4e3b',
+      category: 'Movies',
+      isLive: true,
+    },
+    {
+      id: '3',
+      name: 'News Network',
+      aceId: 'acestream://a7b9c8d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0',
+      category: 'News',
+      isLive: false,
+    },
+  ];
+
+  const handleChannelSelect = (channel: Channel) => {
+    setSelectedChannel(channel);
+    setAceStreamId(channel.aceId.replace('acestream://', ''));
+  };
+
   const handleStartStream = async () => {
     if (!aceStreamId.trim()) {
-      setError('Please enter a valid Ace Stream ID');
+      setError('Please select a channel or enter a valid Ace Stream ID');
       return;
     }
 
+    // Clean aceStreamId (remove acestream:// prefix if present)
+    const cleanId = aceStreamId.replace('acestream://', '');
+
     // Validate Ace Stream ID format (40 hex characters)
-    if (aceStreamId.length !== 40 || !/^[a-f0-9]+$/i.test(aceStreamId)) {
+    if (cleanId.length !== 40 || !/^[a-f0-9]+$/i.test(cleanId)) {
       setError(
         'Invalid Ace Stream ID format. Must be 40 hexadecimal characters.'
       );
@@ -34,7 +101,7 @@ export function App() {
 
     try {
       const response = await fetch(
-        `http://localhost:3001/api/streams/start/${aceStreamId}`,
+        `http://localhost:3001/api/streams/start/${cleanId}`,
         {
           method: 'POST',
           headers: {
@@ -52,7 +119,7 @@ export function App() {
       if (data.success) {
         setSessionId(data.session.id);
         setStreamUrl(data.session.hlsUrl);
-        // Start polling for stats
+        setIsVideoLoading(true);
         pollStreamStats(data.session.id);
       } else {
         throw new Error('Failed to create stream session');
@@ -67,7 +134,6 @@ export function App() {
     }
   };
 
-  // Real API call to stop stream
   const handleStopStream = async () => {
     if (sessionId) {
       try {
@@ -84,9 +150,10 @@ export function App() {
     setSessionId('');
     setError('');
     setStats({ peers: 0, downloadSpeed: '0 KB/s', status: 'stopped' });
+    setSelectedChannel(null);
+    setIsVideoLoading(false);
   };
 
-  // Poll stream statistics
   const pollStreamStats = async (currentSessionId: string) => {
     if (!currentSessionId || !isStreaming) return;
 
@@ -108,7 +175,6 @@ export function App() {
       console.error('Failed to fetch stream stats:', err);
     }
 
-    // Poll every 5 seconds if still streaming
     setTimeout(() => {
       if (isStreaming && sessionId === currentSessionId) {
         pollStreamStats(currentSessionId);
@@ -129,7 +195,6 @@ export function App() {
           );
           setEngineStatus('offline');
         } else {
-          // Check Ace Stream engine status
           if (data.services?.aceStream?.status === 'healthy') {
             setEngineStatus('online');
           } else {
@@ -152,306 +217,449 @@ export function App() {
     checkBackendHealth();
   }, []);
 
-  const handleVlcLaunch = () => {
-    if (streamUrl) {
-      // Open VLC with the stream URL
-      window.open(`vlc://${streamUrl}`, '_blank');
+  // Video control handlers
+  const handleVideoTimeUpdate = (time: number, dur: number) => {
+    setCurrentTime(time);
+    setDuration(dur);
+    // Hide loading overlay once we have duration (video has loaded)
+    if (dur > 0 && isVideoLoading) {
+      setIsVideoLoading(false);
     }
   };
 
+  const handleVideoVolumeChange = (vol: number, muted: boolean) => {
+    setVolume(vol);
+    setIsMuted(muted);
+  };
+
+  const handleVideoPlayStateChange = (playing: boolean) => {
+    setVideoIsPlaying(playing);
+  };
+
+  const handlePlay = () => videoRef.current?.play();
+  const handlePause = () => videoRef.current?.pause();
+  const handleSeek = (time: number) => videoRef.current?.seek(time);
+  const handleVolumeChange = (newVolume: number) => {
+    videoRef.current?.setVolume(newVolume);
+    if (newVolume > 0 && isMuted) {
+      videoRef.current?.toggleMute();
+    }
+  };
+  const handleToggleMute = () => videoRef.current?.toggleMute();
+  const handleToggleFullscreen = () => {
+    if (isFullscreen) {
+      videoRef.current?.exitFullscreen();
+      setIsFullscreen(false);
+    } else {
+      videoRef.current?.requestFullscreen();
+      setIsFullscreen(true);
+    }
+  };
+
+  // Listen for fullscreen changes
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () =>
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  // Keyboard navigation handler
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // TV Remote / Keyboard shortcuts
+      switch (event.key) {
+        case 'Enter':
+        case ' ': // Space bar
+          event.preventDefault();
+          if (streamUrl) {
+            // If video is playing, toggle play/pause
+            if (videoIsPlaying) {
+              handlePause();
+            } else {
+              handlePlay();
+            }
+          } else if (!isStreaming && aceStreamId) {
+            handleStartStream();
+          } else if (isStreaming) {
+            handleStopStream();
+          }
+          break;
+        case 'Escape':
+          if (isFullscreen) {
+            handleToggleFullscreen();
+          } else if (isStreaming) {
+            handleStopStream();
+          }
+          break;
+        case 'f':
+        case 'F':
+          if (streamUrl) {
+            handleToggleFullscreen();
+          }
+          break;
+        case 'm':
+        case 'M':
+          if (streamUrl) {
+            handleToggleMute();
+          }
+          break;
+        case 'ArrowLeft':
+          if (streamUrl && event.shiftKey) {
+            event.preventDefault();
+            handleSeek(Math.max(0, currentTime - 10));
+          }
+          break;
+        case 'ArrowRight':
+          if (streamUrl && event.shiftKey) {
+            event.preventDefault();
+            handleSeek(Math.min(duration, currentTime + 10));
+          }
+          break;
+        case 'ArrowUp':
+        case 'ArrowDown':
+          // Channel navigation will be handled in ChannelSidebar
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    isStreaming,
+    aceStreamId,
+    streamUrl,
+    videoIsPlaying,
+    currentTime,
+    duration,
+    isFullscreen,
+  ]);
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
       {/* Header */}
-      <header className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 bg-primary-600 rounded-lg flex items-center justify-center">
-              <svg
-                className="w-5 h-5 text-white"
-                fill="currentColor"
-                viewBox="0 0 20 20"
-              >
-                <path d="M2 6a2 2 0 012-2h6l2 2h6a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
-              </svg>
+      <header className="bg-black/20 backdrop-blur-sm border-b border-white/10">
+        <div className="max-w-full mx-auto px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl flex items-center justify-center">
+                <svg
+                  className="w-6 h-6 text-white"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path d="M2 6a2 2 0 012-2h6l2 2h6a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+                </svg>
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent">
+                  Acestreamity
+                </h1>
+                <p className="text-sm text-gray-400">
+                  Universal P2P Streaming Platform
+                </p>
+              </div>
             </div>
-            <h1 className="text-2xl font-bold text-gray-900">Ace Stream HLS</h1>
-            <span className="text-sm text-gray-500">
-              Cross-platform streaming
-            </span>
+
+            {/* Status Indicators */}
+            <div className="flex items-center space-x-4">
+              <Chip
+                color={
+                  engineStatus === 'online'
+                    ? 'success'
+                    : engineStatus === 'error'
+                    ? 'danger'
+                    : 'warning'
+                }
+                variant="flat"
+                size="sm"
+              >
+                Engine{' '}
+                {engineStatus === 'online'
+                  ? 'Online'
+                  : engineStatus === 'error'
+                  ? 'Error'
+                  : 'Checking'}
+              </Chip>
+              {isStreaming && (
+                <Chip color="primary" variant="flat" size="sm">
+                  🔴 Live • {stats.peers} peers
+                </Chip>
+              )}
+            </div>
           </div>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_2fr] gap-8">
-          {/* Control Panel */}
-          <div className="space-y-6">
-            <div className="card">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                Stream Control
-              </h2>
+      {/* Main Layout */}
+      <div className="flex h-[calc(100vh-80px)]">
+        {/* Channel Sidebar - 1/4 width */}
+        <div className="w-1/4 bg-black/20 backdrop-blur-sm border-r border-white/10">
+          <ChannelSidebar
+            channels={channels}
+            selectedChannel={selectedChannel}
+            onChannelSelect={handleChannelSelect}
+            onCustomId={(id: string) => setAceStreamId(id)}
+          />
+        </div>
 
-              <div className="space-y-4">
-                <div>
-                  <label className="label">Ace Stream Content ID</label>
-                  <input
-                    type="text"
-                    value={aceStreamId}
-                    onChange={(e) => setAceStreamId(e.target.value)}
-                    placeholder="Enter 40-character Ace Stream ID..."
-                    className="input"
-                    disabled={isStreaming}
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Example: dd1e67078381739d14beca697356ab76d49d1a2d
-                  </p>
-                </div>
+        {/* Main Player Area - 3/4 width */}
+        <div className="w-3/4 flex flex-col">
+          {/* Player Container */}
+          <div className="flex-1 p-6">
+            <Card className="h-full bg-black/40 backdrop-blur-sm border-white/10">
+              <CardBody className="p-0 h-full">
+                {!streamUrl ? (
+                  <div className="h-full flex items-center justify-center">
+                    <div className="text-center space-y-6">
+                      <div className="w-24 h-24 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-full flex items-center justify-center mx-auto">
+                        <svg
+                          className="w-12 h-12 text-white/60"
+                          fill="currentColor"
+                          viewBox="0 0 20 20"
+                        >
+                          <path
+                            fillRule="evenodd"
+                            d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z"
+                            clipRule="evenodd"
+                          />
+                        </svg>
+                      </div>
+                      <div>
+                        <h3 className="text-2xl font-semibold text-white mb-2">
+                          Welcome to Acestreamity
+                        </h3>
+                        <p className="text-gray-400 mb-6">
+                          Select a channel from the sidebar or enter a custom
+                          Ace Stream ID to begin streaming
+                        </p>
 
-                {error && (
-                  <div className="p-3 bg-error-50 border border-error-200 rounded-lg">
-                    <p className="text-sm text-error-700">{error}</p>
+                        {/* Quick Start Controls */}
+                        <div className="space-y-4 max-w-md mx-auto">
+                          <Input
+                            label="Custom Ace Stream ID"
+                            placeholder="Enter 40-character ID"
+                            value={aceStreamId}
+                            onChange={(e) => setAceStreamId(e.target.value)}
+                            variant="bordered"
+                            className="text-white"
+                            classNames={{
+                              input: 'text-white placeholder:text-gray-400',
+                              inputWrapper:
+                                'bg-white/10 border-white/20 hover:border-white/30 focus-within:border-purple-500',
+                            }}
+                          />
+
+                          <Button
+                            color="primary"
+                            size="lg"
+                            className="w-full bg-gradient-to-r from-purple-500 to-pink-500 font-semibold"
+                            onPress={handleStartStream}
+                            isLoading={isStreaming}
+                            isDisabled={!aceStreamId.trim()}
+                          >
+                            {isStreaming
+                              ? 'Starting Stream...'
+                              : 'Start Stream'}
+                          </Button>
+                        </div>
+
+                        {error && (
+                          <div className="mt-4 p-3 bg-red-500/20 border border-red-500/30 rounded-lg">
+                            <p className="text-red-300 text-sm">{error}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                )}
+                ) : (
+                  <div className="h-full relative">
+                    {/* Video Player */}
+                    <div className="relative w-full h-full rounded-lg overflow-hidden">
+                      <HlsPlayer
+                        ref={videoRef}
+                        src={streamUrl}
+                        className="w-full h-full object-cover"
+                        onTimeUpdate={handleVideoTimeUpdate}
+                        onVolumeChange={handleVideoVolumeChange}
+                        onPlayStateChange={handleVideoPlayStateChange}
+                      />
 
-                <div className="flex space-x-3">
-                  {!isStreaming ? (
-                    <button
-                      onClick={handleStartStream}
-                      className="btn-primary flex-1"
-                      disabled={!aceStreamId.trim()}
-                    >
-                      <svg
-                        className="w-4 h-4 mr-2"
-                        fill="currentColor"
-                        viewBox="0 0 20 20"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                      Start Stream
-                    </button>
-                  ) : (
-                    <button
-                      onClick={handleStopStream}
-                      className="btn-error flex-1"
-                    >
-                      <svg
-                        className="w-4 h-4 mr-2"
-                        fill="currentColor"
-                        viewBox="0 0 20 20"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                      Stop Stream
-                    </button>
-                  )}
-                </div>
+                      {/* Loading Overlay */}
+                      {isVideoLoading && (
+                        <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center">
+                          <div className="text-center space-y-6">
+                            {/* Animated Loading Icon */}
+                            <div className="relative">
+                              <div className="w-16 h-16 border-4 border-purple-500/20 rounded-full"></div>
+                              <div className="absolute top-0 left-0 w-16 h-16 border-4 border-transparent border-t-purple-500 rounded-full animate-spin"></div>
+                            </div>
 
-                {streamUrl && (
-                  <div className="border-t border-gray-200 pt-4">
-                    <h3 className="text-sm font-medium text-gray-900 mb-3">
-                      Quick Actions
-                    </h3>
-                    <div className="space-y-2">
-                      <button
-                        onClick={handleVlcLaunch}
-                        className="btn-secondary w-full justify-start"
+                            {/* Loading Text */}
+                            <div className="space-y-2">
+                              <h3 className="text-white text-lg font-semibold">
+                                Connecting to Stream
+                              </h3>
+                              <p className="text-gray-300 text-sm">
+                                Waiting for m3u8 response...
+                              </p>
+                              <div className="flex items-center justify-center space-x-1">
+                                <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></div>
+                                <div
+                                  className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"
+                                  style={{ animationDelay: '0.2s' }}
+                                ></div>
+                                <div
+                                  className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"
+                                  style={{ animationDelay: '0.4s' }}
+                                ></div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Video Overlay Controls */}
+                    <div className="absolute top-4 right-4 space-y-2">
+                      <Button
+                        color="danger"
+                        variant="flat"
+                        size="sm"
+                        onPress={handleStopStream}
+                        className="bg-black/60 backdrop-blur-sm"
                       >
-                        <svg
-                          className="w-4 h-4 mr-2"
-                          fill="currentColor"
-                          viewBox="0 0 20 20"
-                        >
-                          <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" />
-                        </svg>
-                        Open in VLC
-                      </button>
-                      <button
-                        onClick={() => navigator.clipboard.writeText(streamUrl)}
-                        className="btn-secondary w-full justify-start"
-                      >
-                        <svg
-                          className="w-4 h-4 mr-2"
-                          fill="currentColor"
-                          viewBox="0 0 20 20"
-                        >
-                          <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
-                          <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
-                        </svg>
-                        Copy Stream URL
-                      </button>
+                        Stop Stream
+                      </Button>
+                    </div>
+
+                    {/* Stream Info Overlay */}
+                    <div className="absolute bottom-4 left-4 right-4">
+                      <Card className="bg-black/60 backdrop-blur-sm border-white/10">
+                        <CardBody className="p-4">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <h4 className="text-white font-semibold">
+                                {selectedChannel?.name || 'Custom Stream'}
+                              </h4>
+                              <p className="text-gray-300 text-sm">
+                                {selectedChannel?.category || 'Ace Stream'} •{' '}
+                                {stats.downloadSpeed}
+                              </p>
+                            </div>
+                            <div className="flex items-center space-x-4">
+                              <div className="text-center">
+                                <p className="text-white font-bold">
+                                  {stats.peers}
+                                </p>
+                                <p className="text-gray-400 text-xs">Peers</p>
+                              </div>
+                              <Progress
+                                value={Math.min(stats.peers * 10, 100)}
+                                className="w-20"
+                                color="success"
+                                size="sm"
+                              />
+                            </div>
+                          </div>
+                        </CardBody>
+                      </Card>
                     </div>
                   </div>
                 )}
-              </div>
-            </div>
-
-            {/* Status Card */}
-            <div className="card">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                Stream Status
-              </h3>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">Engine Status</span>
-                  <span
-                    className={
-                      engineStatus === 'online'
-                        ? 'status-streaming'
-                        : engineStatus === 'error'
-                        ? 'status-error'
-                        : engineStatus === 'offline'
-                        ? 'status-stopped'
-                        : 'status-loading'
-                    }
-                  >
-                    {engineStatus === 'online'
-                      ? 'Online'
-                      : engineStatus === 'error'
-                      ? 'Error'
-                      : engineStatus === 'offline'
-                      ? 'Offline'
-                      : 'Checking...'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">Stream Status</span>
-                  {isStreaming ? (
-                    <span className="status-loading">
-                      <svg
-                        className="w-3 h-3 mr-1 animate-spin"
-                        fill="currentColor"
-                        viewBox="0 0 20 20"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                      {streamUrl ? 'Streaming' : 'Starting...'}
-                    </span>
-                  ) : (
-                    <span className="status-stopped">Stopped</span>
-                  )}
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">Peers</span>
-                  <span className="text-sm font-medium text-gray-900">
-                    {stats.peers}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">Download Speed</span>
-                  <span className="text-sm font-medium text-gray-900">
-                    {stats.downloadSpeed}
-                  </span>
-                </div>
-              </div>
-            </div>
+              </CardBody>
+            </Card>
           </div>
 
-          {/* Video Player Area */}
-          <div className="card">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              Stream Player
-            </h2>
-
-            {!streamUrl ? (
-              <div className="aspect-video bg-gray-100 rounded-lg flex items-center justify-center">
-                <div className="text-center">
-                  <svg
-                    className="w-12 h-12 text-gray-400 mx-auto mb-4"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm3 2h6v4H7V5zm8 8v2h1v-2h-1zm-2-2H7v4h6v-4z"
-                      clipRule="evenodd"
+          {/* Bottom Controls */}
+          <div className="p-6 pt-0">
+            <Card className="bg-black/20 backdrop-blur-sm border-white/10">
+              <CardBody className="p-4">
+                {streamUrl ? (
+                  /* Custom Video Controls */
+                  <div className="flex items-center justify-between">
+                    <VideoControls
+                      isPlaying={videoIsPlaying}
+                      currentTime={currentTime}
+                      duration={duration}
+                      volume={volume}
+                      isMuted={isMuted}
+                      onPlay={handlePlay}
+                      onPause={handlePause}
+                      onSeek={handleSeek}
+                      onVolumeChange={handleVolumeChange}
+                      onToggleMute={handleToggleMute}
+                      onToggleFullscreen={handleToggleFullscreen}
                     />
-                  </svg>
-                  <p className="text-gray-500">
-                    Enter an Ace Stream ID to start streaming
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="aspect-video bg-black rounded-lg flex items-center justify-center">
-                  <HlsPlayer
-                    src={streamUrl}
-                    className="w-full h-full rounded-lg"
-                    poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'%3E%3Cpath fill='%236B7280' d='M4 6h16v12H4z'/%3E%3C/svg%3E"
-                  />
-                </div>
 
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <h4 className="text-sm font-medium text-gray-900 mb-2">
-                    Stream Information
-                  </h4>
-                  <div className="text-xs text-gray-600 space-y-1">
-                    <div>Content ID: {aceStreamId}</div>
-                    <div>Format: HLS (HTTP Live Streaming)</div>
-                    <div>Quality: Auto (adapts to bandwidth)</div>
+                    <div className="flex items-center space-x-4 ml-4">
+                      <Button
+                        variant="flat"
+                        color="danger"
+                        size="sm"
+                        onPress={handleStopStream}
+                        className="bg-red-500/20 hover:bg-red-500/30"
+                      >
+                        ⏹ Stop Stream
+                      </Button>
+
+                      <Button
+                        variant="bordered"
+                        size="sm"
+                        onPress={() => navigator.clipboard.writeText(streamUrl)}
+                        className="border-white/20 text-white hover:border-white/40"
+                      >
+                        📋 Copy URL
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+                ) : (
+                  /* Stream Start Controls */
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-4">
+                      <Button
+                        variant="solid"
+                        color="primary"
+                        onPress={handleStartStream}
+                        isDisabled={!aceStreamId.trim()}
+                        isLoading={isStreaming}
+                        className="bg-gradient-to-r from-purple-500 to-pink-500"
+                      >
+                        {isStreaming ? 'Starting...' : '▶ Start Stream'}
+                      </Button>
+                    </div>
 
-        {/* Instructions */}
-        <div className="mt-8 card">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            How to Use
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div>
-              <div className="w-8 h-8 bg-primary-100 text-primary-600 rounded-lg flex items-center justify-center mb-3">
-                <span className="text-sm font-bold">1</span>
-              </div>
-              <h4 className="font-medium text-gray-900 mb-2">
-                Enter Content ID
-              </h4>
-              <p className="text-sm text-gray-600">
-                Paste a 40-character Ace Stream content ID in the input field
-                above.
-              </p>
-            </div>
-            <div>
-              <div className="w-8 h-8 bg-primary-100 text-primary-600 rounded-lg flex items-center justify-center mb-3">
-                <span className="text-sm font-bold">2</span>
-              </div>
-              <h4 className="font-medium text-gray-900 mb-2">
-                Start Streaming
-              </h4>
-              <p className="text-sm text-gray-600">
-                Click "Start Stream" to begin converting the P2P stream to HLS
-                format.
-              </p>
-            </div>
-            <div>
-              <div className="w-8 h-8 bg-primary-100 text-primary-600 rounded-lg flex items-center justify-center mb-3">
-                <span className="text-sm font-bold">3</span>
-              </div>
-              <h4 className="font-medium text-gray-900 mb-2">Watch Anywhere</h4>
-              <p className="text-sm text-gray-600">
-                Use the web player or copy the stream URL to watch on VLC, iOS,
-                tvOS, and more.
-              </p>
-            </div>
+                    <div className="text-right">
+                      <p className="text-white text-sm font-medium">
+                        Press{' '}
+                        <kbd className="px-2 py-1 bg-white/10 rounded text-xs">
+                          ENTER
+                        </kbd>{' '}
+                        to start
+                      </p>
+                      <p className="text-gray-400 text-xs">
+                        <kbd className="px-1 bg-white/10 rounded">F</kbd>{' '}
+                        fullscreen •
+                        <kbd className="px-1 bg-white/10 rounded ml-1">M</kbd>{' '}
+                        mute •
+                        <kbd className="px-1 bg-white/10 rounded ml-1">
+                          Shift+←→
+                        </kbd>{' '}
+                        seek •
+                        <kbd className="px-1 bg-white/10 rounded ml-1">↑↓</kbd>{' '}
+                        channels
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </CardBody>
+            </Card>
           </div>
         </div>
-      </main>
+      </div>
     </div>
   );
 }
