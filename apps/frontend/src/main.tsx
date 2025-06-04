@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import * as ReactDOM from 'react-dom/client';
-import { HeroUIProvider } from '@heroui/react';
-import App from './app/app';
+import { AppProviders } from './providers';
+import { App } from './app/app.refactored';
 import './styles.css';
 
 const root = ReactDOM.createRoot(
@@ -10,8 +10,8 @@ const root = ReactDOM.createRoot(
 
 root.render(
   <StrictMode>
-    <HeroUIProvider>
+    <AppProviders>
       <App />
-    </HeroUIProvider>
+    </AppProviders>
   </StrictMode>
 );

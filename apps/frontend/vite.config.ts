@@ -14,6 +14,13 @@ export default defineConfig(async (): Promise<UserConfig> => {
     server: {
       port: 3000,
       host: 'localhost',
+      proxy: {
+        '/api': {
+          target: 'http://localhost:3001',
+          changeOrigin: true,
+          secure: false,
+        },
+      },
     },
 
     preview: {
