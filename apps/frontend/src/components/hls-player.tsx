@@ -96,33 +96,41 @@ export const HlsPlayer = forwardRef<HlsPlayerRef, HlsPlayerProps>(
       }
 
       if (Hls.isSupported()) {
-        // Use hls.js for browsers that support MSE with balanced fast-start config
+        // Use hls.js with VLC-like aggressive playback strategy
         const hls = new Hls({
           // Core settings
           enableWorker: true,
-          lowLatencyMode: false, // Disable for stability
+          lowLatencyMode: true, // Enable for faster start
 
-          // Balanced buffering for fast start but stable playback
-          maxBufferLength: 10, // 10 seconds buffer (was 30, compromise)
-          maxMaxBufferLength: 60, // Reasonable max buffer
-          backBufferLength: 30, // Keep some back buffer
+          // VLC-like aggressive buffering - start ASAP
+          maxBufferLength: 3, // Only 3 seconds buffer - like VLC
+          maxMaxBufferLength: 15, // Small max buffer
+          backBufferLength: 10, // Minimal back buffer
 
-          // Fast start optimizations
-          maxBufferHole: 0.5, // Fill gaps reasonably fast
+          // Immediate playback settings
+          maxBufferHole: 0.2, // Fill tiny gaps quickly
 
-          // Quality selection
-          startLevel: -1, // Auto quality selection
+          // Quality selection - start low, improve later
+          startLevel: 0, // Start with lowest quality for speed
           capLevelToPlayerSize: true,
 
-          // Live stream optimizations (more conservative)
-          liveSyncDurationCount: 3, // Stay reasonably close to live
-          liveMaxLatencyDurationCount: 10, // Allow more buffer for stability
+          // Live stream optimizations - very aggressive
+          liveSyncDurationCount: 1, // Stay at live edge
+          liveMaxLatencyDurationCount: 3, // Minimal latency
 
-          // Network settings
-          manifestLoadingTimeOut: 10000,
-          manifestLoadingMaxRetry: 4,
-          levelLoadingTimeOut: 10000,
-          fragLoadingTimeOut: 20000,
+          // Aggressive network settings - like VLC
+          manifestLoadingTimeOut: 5000, // Quick timeout
+          manifestLoadingMaxRetry: 1, // Don't retry manifest much
+          levelLoadingTimeOut: 3000, // Quick level loading
+          fragLoadingTimeOut: 5000, // Quick fragment timeout
+
+          // Fragment loading optimizations
+          fragLoadingMaxRetry: 1, // Don't retry fragments much
+          levelLoadingMaxRetry: 1, // Don't retry levels much
+
+          // Immediate start settings
+          startFragPrefetch: true, // Prefetch immediately
+          testBandwidth: false, // Skip bandwidth test
 
           debug: false,
         });
@@ -133,7 +141,17 @@ export const HlsPlayer = forwardRef<HlsPlayerRef, HlsPlayerProps>(
         hls.attachMedia(video);
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          console.log('HLS manifest parsed, ready for playback');
+          // VLC-like immediate playback attempt
+          video.play().catch(console.error);
+        });
+
+        hls.on(Hls.Events.FRAG_LOADED, (event, data) => {
+          // Start playing as soon as first fragment loads (VLC behavior)
+          if (data.frag.sn === 0 || data.frag.sn === 1) {
+            if (video.paused) {
+              video.play().catch(console.error);
+            }
+          }
         });
 
         hls.on(Hls.Events.ERROR, (event, data) => {
