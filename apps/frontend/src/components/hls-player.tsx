@@ -6,6 +6,7 @@ import {
   useImperativeHandle,
 } from 'react';
 import Hls from 'hls.js';
+import { HlsPlayerRef } from '../interfaces';
 
 type HlsPlayerProps = {
   src: string;
@@ -14,26 +15,24 @@ type HlsPlayerProps = {
   onTimeUpdate?: (currentTime: number, duration: number) => void;
   onVolumeChange?: (volume: number, muted: boolean) => void;
   onPlayStateChange?: (isPlaying: boolean) => void;
-};
-
-export type HlsPlayerRef = {
-  play: () => void;
-  pause: () => void;
-  seek: (time: number) => void;
-  setVolume: (volume: number) => void;
-  toggleMute: () => void;
-  requestFullscreen: () => void;
-  exitFullscreen: () => void;
-  isPlaying: () => boolean;
-  isMuted: () => boolean;
-  getCurrentTime: () => number;
-  getDuration: () => number;
-  getVolume: () => number;
+  onLoadStart?: () => void;
+  onCanPlay?: () => void;
+  onError?: (error: string) => void;
 };
 
 export const HlsPlayer = forwardRef<HlsPlayerRef, HlsPlayerProps>(
   (
-    { src, className, poster, onTimeUpdate, onVolumeChange, onPlayStateChange },
+    {
+      src,
+      className,
+      poster,
+      onTimeUpdate,
+      onVolumeChange,
+      onPlayStateChange,
+      onLoadStart,
+      onCanPlay,
+      onError,
+    },
     ref
   ) => {
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -43,7 +42,7 @@ export const HlsPlayer = forwardRef<HlsPlayerRef, HlsPlayerProps>(
     useImperativeHandle(ref, () => ({
       play: () => {
         if (videoRef.current) {
-          videoRef.current.play();
+          videoRef.current.play().catch(console.error);
         }
       },
       pause: () => {
@@ -85,72 +84,56 @@ export const HlsPlayer = forwardRef<HlsPlayerRef, HlsPlayerProps>(
       getVolume: () => videoRef.current?.volume || 1,
     }));
 
+    // HLS configuration for optimal streaming
+    const hlsConfig = {
+      enableWorker: true,
+      lowLatencyMode: true,
+      maxBufferLength: 3,
+      maxMaxBufferLength: 15,
+      backBufferLength: 10,
+      maxBufferHole: 0.2,
+      startLevel: 0,
+      capLevelToPlayerSize: true,
+      liveSyncDurationCount: 1,
+      liveMaxLatencyDurationCount: 3,
+      manifestLoadingTimeOut: 5000,
+      manifestLoadingMaxRetry: 1,
+      levelLoadingTimeOut: 3000,
+      fragLoadingTimeOut: 5000,
+      fragLoadingMaxRetry: 1,
+      levelLoadingMaxRetry: 1,
+      startFragPrefetch: true,
+      testBandwidth: false,
+      debug: false,
+    };
+
+    // Setup HLS
     useEffect(() => {
       const video = videoRef.current;
-      if (!video) return;
+      if (!video || !src) return;
 
-      // Cleanup previous HLS instance
+      onLoadStartRef.current?.();
+
+      // Cleanup previous instance
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
       }
 
       if (Hls.isSupported()) {
-        // Use hls.js with VLC-like aggressive playback strategy
-        const hls = new Hls({
-          // Core settings
-          enableWorker: true,
-          lowLatencyMode: true, // Enable for faster start
-
-          // VLC-like aggressive buffering - start ASAP
-          maxBufferLength: 3, // Only 3 seconds buffer - like VLC
-          maxMaxBufferLength: 15, // Small max buffer
-          backBufferLength: 10, // Minimal back buffer
-
-          // Immediate playback settings
-          maxBufferHole: 0.2, // Fill tiny gaps quickly
-
-          // Quality selection - start low, improve later
-          startLevel: 0, // Start with lowest quality for speed
-          capLevelToPlayerSize: true,
-
-          // Live stream optimizations - very aggressive
-          liveSyncDurationCount: 1, // Stay at live edge
-          liveMaxLatencyDurationCount: 3, // Minimal latency
-
-          // Aggressive network settings - like VLC
-          manifestLoadingTimeOut: 5000, // Quick timeout
-          manifestLoadingMaxRetry: 1, // Don't retry manifest much
-          levelLoadingTimeOut: 3000, // Quick level loading
-          fragLoadingTimeOut: 5000, // Quick fragment timeout
-
-          // Fragment loading optimizations
-          fragLoadingMaxRetry: 1, // Don't retry fragments much
-          levelLoadingMaxRetry: 1, // Don't retry levels much
-
-          // Immediate start settings
-          startFragPrefetch: true, // Prefetch immediately
-          testBandwidth: false, // Skip bandwidth test
-
-          debug: false,
-        });
-
+        const hls = new Hls(hlsConfig);
         hlsRef.current = hls;
 
         hls.loadSource(src);
         hls.attachMedia(video);
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          // VLC-like immediate playback attempt
           video.play().catch(console.error);
         });
 
         hls.on(Hls.Events.FRAG_LOADED, (event, data) => {
-          // Start playing as soon as first fragment loads (VLC behavior)
-          if (data.frag.sn === 0 || data.frag.sn === 1) {
-            if (video.paused) {
-              video.play().catch(console.error);
-            }
+          if ((data.frag.sn === 0 || data.frag.sn === 1) && video.paused) {
+            video.play().catch(console.error);
           }
         });
 
@@ -160,96 +143,120 @@ export const HlsPlayer = forwardRef<HlsPlayerRef, HlsPlayerProps>(
           if (data.fatal) {
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
-                console.log(
-                  'Fatal network error encountered, trying to recover'
-                );
+                console.log('Fatal network error, trying to recover');
                 hls.startLoad();
                 break;
               case Hls.ErrorTypes.MEDIA_ERROR:
-                console.log('Fatal media error encountered, trying to recover');
+                console.log('Fatal media error, trying to recover');
                 hls.recoverMediaError();
                 break;
               default:
                 console.log('Fatal error, cannot recover');
+                onErrorRef.current?.('Playback failed. Please try again.');
                 hls.destroy();
                 break;
             }
           }
         });
-
-        return () => {
-          if (hls) {
-            hls.destroy();
-          }
-        };
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         // Native HLS support (Safari)
         video.src = src;
       } else {
-        console.error('HLS is not supported in this browser');
+        onErrorRef.current?.('HLS is not supported in this browser');
       }
-    }, [src]);
 
+      // Cleanup function for useEffect
+      return () => {
+        if (hlsRef.current) {
+          hlsRef.current.destroy();
+          hlsRef.current = null;
+        }
+      };
+    }, [src]); // Remove onLoadStart and onError from dependencies to prevent infinite loops
+
+    // Store all callbacks in refs to avoid dependency issues
+    const onTimeUpdateRef = useRef(onTimeUpdate);
+    const onVolumeChangeRef = useRef(onVolumeChange);
+    const onPlayStateChangeRef = useRef(onPlayStateChange);
+    const onCanPlayRef = useRef(onCanPlay);
+    const onErrorRef = useRef(onError);
+    const onLoadStartRef = useRef(onLoadStart);
+
+    // Update refs when callbacks change
+    useEffect(() => {
+      onTimeUpdateRef.current = onTimeUpdate;
+      onVolumeChangeRef.current = onVolumeChange;
+      onPlayStateChangeRef.current = onPlayStateChange;
+      onCanPlayRef.current = onCanPlay;
+      onErrorRef.current = onError;
+      onLoadStartRef.current = onLoadStart;
+    }, [
+      onTimeUpdate,
+      onVolumeChange,
+      onPlayStateChange,
+      onCanPlay,
+      onError,
+      onLoadStart,
+    ]);
+
+    // Event listeners - only setup once to prevent infinite loops
     useEffect(() => {
       const video = videoRef.current;
       if (!video) return;
 
       const handlePlay = () => {
         setIsPlaying(true);
-        onPlayStateChange?.(true);
+        onPlayStateChangeRef.current?.(true);
       };
 
       const handlePause = () => {
         setIsPlaying(false);
-        onPlayStateChange?.(false);
+        onPlayStateChangeRef.current?.(false);
       };
 
       const handleTimeUpdate = () => {
-        onTimeUpdate?.(video.currentTime, video.duration);
+        onTimeUpdateRef.current?.(video.currentTime, video.duration);
       };
 
       const handleVolumeChange = () => {
-        onVolumeChange?.(video.volume, video.muted);
+        onVolumeChangeRef.current?.(video.volume, video.muted);
+      };
+
+      const handleCanPlay = () => {
+        onCanPlayRef.current?.();
+      };
+
+      const handleError = () => {
+        onErrorRef.current?.('Video playback error occurred');
       };
 
       video.addEventListener('play', handlePlay);
       video.addEventListener('pause', handlePause);
       video.addEventListener('timeupdate', handleTimeUpdate);
       video.addEventListener('volumechange', handleVolumeChange);
+      video.addEventListener('canplay', handleCanPlay);
+      video.addEventListener('error', handleError);
 
       return () => {
         video.removeEventListener('play', handlePlay);
         video.removeEventListener('pause', handlePause);
         video.removeEventListener('timeupdate', handleTimeUpdate);
         video.removeEventListener('volumechange', handleVolumeChange);
+        video.removeEventListener('canplay', handleCanPlay);
+        video.removeEventListener('error', handleError);
       };
-    }, [onTimeUpdate, onVolumeChange, onPlayStateChange]);
-
-    useEffect(() => {
-      return () => {
-        // Cleanup on unmount
-        if (hlsRef.current) {
-          hlsRef.current.destroy();
-          hlsRef.current = null;
-        }
-      };
-    }, []);
+    }, []); // No dependencies - setup once only
 
     return (
       <video
         ref={videoRef}
         className={className}
-        controls={false} // Disable native controls
+        poster={poster}
+        controls={false}
         playsInline
         muted={false}
-        autoPlay={true}
-        preload="auto" // Aggressively preload data
-        crossOrigin="anonymous" // For CORS streams
-      >
-        Your browser does not support the video tag or HLS streaming.
-      </video>
+        style={{ width: '100%', height: '100%' }}
+      />
     );
   }
 );
-
-HlsPlayer.displayName = 'HlsPlayer';

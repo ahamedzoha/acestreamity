@@ -1,2 +1,2 @@
 // Main app providers
-export * from './app-providers.component';
+export * from './app-providers';
