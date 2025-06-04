@@ -72,7 +72,7 @@ app.use(
 );
 
 // 404 handler
-app.use('*', (req, res) => {
+app.use('*splat', (req, res) => {
   res.status(404).json({
     error: 'Not found',
     message: `Route ${req.originalUrl} not found`,
